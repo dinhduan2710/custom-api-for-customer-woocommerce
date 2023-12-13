@@ -140,6 +140,11 @@ add_action(
                 ),
             ),
         ));
+
+        register_rest_route('custom/v1', '/customer', array(
+            'methods' => 'GET',
+            'callback' => 'get_customer',
+        ));
     }
 );
 
@@ -699,6 +704,23 @@ function custom_get_product_items_by_order_id($data)
             'customer_email' => $customer_data->user_email,
         ),
         'product_items' => $product_items,
+    );
+
+    return rest_ensure_response($response_data);
+}
+
+// get information customer
+function get_customer()
+{
+    $user_id = get_current_user_id();
+    $customer_data = get_userdata($user_id);
+    $response_data = array(
+        'customer_info' => array(
+            'customer_id' => $user_id,
+            'display_name' => $customer_data->display_name,
+            'customer_username' => $customer_data->user_login,
+            'customer_email' => $customer_data->user_email,
+        ),
     );
 
     return rest_ensure_response($response_data);
