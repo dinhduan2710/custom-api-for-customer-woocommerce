@@ -41,10 +41,14 @@ add_action(
             // 'permission_callback' => '__return_true'
         ));
 
-        register_rest_route('custom/v1', 'products/(?P<id>[a-zA-Z0-9-]+)', array(
+        register_rest_route('custom/v1', 'products-details/(?P<id>\d+)', array(
             'methods' => 'GET',
-            'callback' => 'wl_get_product_by_id',
-            // 'permission_callback' => '__return_true'
+            'callback' => 'get_product_by_id',
+        ));
+
+        register_rest_route('custom/v1', 'product-variations/(?P<id>\d+)', array(
+            'methods' => 'GET',
+            'callback' => 'get_product_variation_by_id',
         ));
 
         register_rest_route('custom/v1', 'customers', array(
@@ -56,7 +60,7 @@ add_action(
         register_rest_route('custom/v1', 'check-coupon', array(
             'methods' => 'GET',
             'callback' => 'wpc_check_coupon_valid',
-            // 'permission_callback' => '__return_true'
+            'permission_callback' => '__return_true'
         ));
 
         register_rest_route('custom/v1', 'available-payment-gateways', array(
@@ -225,16 +229,22 @@ function wl_get_product_by_price($req)
 }
 
 // get product by id
-function wl_get_product_by_id($req)
+function get_product_by_id($req)
 {
-    $id = $req['id'];
-    return $id;
-    $productId = get_page_by_path($id, OBJECT, 'product');
-    if (!empty($productId)) {
-        $product = wc_get_product($productId);
-        return single_product_data($product);
+    // Get product ID from the request
+    $product_id = $req['id'];
+    // Get product data
+    $product = wc_get_product($product_id);
+
+    if (is_a($product, 'WC_Product')) {
+        // Product found
+        $response =  $product->get_data();
+
+        return new WP_REST_Response($response, 200);
+    } else {
+        // Product not found
+        return new WP_REST_Response('Product not found', 404);
     }
-    return wpc_error_404();
 }
 
 // get all customer
@@ -399,24 +409,21 @@ function wpc_get_related_products($data)
 // check coupond
 function wpc_check_coupon_valid($request)
 {
-    $coupons = [];
+    $coupons = wc_coupons_enabled();
+return $coupons;
+    $response = array();
 
-    $applied_coupons = WC()->cart->get_applied_coupons();
-    return $applied_coupons;
-
-    foreach ($applied_coupons as $coupon_code) {
-        $coupon = new WC_Coupon($coupon_code);
-
-        if ($coupon->exists() && $coupon->is_valid()) {
-            $coupons[] = array(
-                'coupon_code' => $coupon_code,
-                'discount'    => $coupon->get_amount(),
-                // Add more coupon details if needed
-            );
-        }
+    foreach ($coupons as $coupon) {
+        // Build response for each coupon
+        $response[] = array(
+            'id'            => $coupon->get_id(),
+            'code'          => $coupon->get_code(),
+            'amount'        => $coupon->get_amount(),
+            // Add more fields as needed
+        );
     }
 
-    return $coupons;
+    return new WP_REST_Response($response, 200);
 }
 
 //  get payment acaiable
@@ -546,7 +553,7 @@ function custom_create_order($request)
 {
     $parameters = $request->get_json_params();
     $customer_id = isset($parameters['customer_id']) ? absint($parameters['customer_id']) : get_current_user_id();
-    $paymen_cod = $parameters['payment_method'] ? $parameters['payment_method'] : " " ;
+    $paymen_cod = $parameters['payment_method'] ? $parameters['payment_method'] : " ";
     $Payment_title = $parameters['payment_method_title'] ? $parameters['payment_method_title'] : " ";
 
     $billing_address = [
@@ -724,4 +731,19 @@ function get_customer()
     );
 
     return rest_ensure_response($response_data);
+}
+
+function get_product_variation_by_id($data)
+{
+    // Get product ID from the request
+    $product_id = $data['id'];
+
+    $product = wc_get_product($product_id);
+    $current_products = $product->get_children();
+    $data = [];
+    foreach ($current_products as $variation_id) {
+        $products = wc_get_product($variation_id);
+        $data[] = $products->get_data();
+    }
+    return $data;
 }
