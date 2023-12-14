@@ -158,7 +158,17 @@ function wl_get_all_products()
     $products = wc_get_products(array(
         "status" => "published"
     ));
-    return get_all_data_in_format_wc_products($products);
+    $data = [];
+    $product = get_all_data_in_format_wc_products($products);
+
+    foreach ($product as $items) {
+        $product_variant = get_product_variation_by_id($items);
+        $data[] = [
+            "product_variant" => $product_variant,
+            "item_product" => $items,
+        ];
+    }
+    return $data;
 }
 
 //  get all categories 
@@ -235,16 +245,62 @@ function get_product_by_id($req)
     $product_id = $req['id'];
     // Get product data
     $product = wc_get_product($product_id);
-
-    if (is_a($product, 'WC_Product')) {
-        // Product found
-        $response =  $product->get_data();
-
-        return new WP_REST_Response($response, 200);
-    } else {
-        // Product not found
-        return new WP_REST_Response('Product not found', 404);
+    $images         = array();
+    $attachment_ids = array();
+    if ($product->get_gallery_image_ids()) {
+        $attachment_ids[] = $product->get_gallery_image_ids();
     }
+    $attachment_ids = array_merge($attachment_ids, $product->get_gallery_image_ids());
+    foreach ($attachment_ids as $attachment_id) {
+        $attachment_post = get_post($attachment_id);
+        if (is_null($attachment_post)) {
+            continue;
+        }
+
+        $attachment = wp_get_attachment_image_src($attachment_id, 'full');
+        if (!is_array($attachment)) {
+            continue;
+        }
+
+        $images[] = array(
+            'id'                => (int) $attachment_id,
+            'date_created'      => wc_rest_prepare_date_response($attachment_post->post_date, false),
+            'date_created_gmt'  => wc_rest_prepare_date_response(strtotime($attachment_post->post_date_gmt)),
+            'date_modified'     => wc_rest_prepare_date_response($attachment_post->post_modified, false),
+            'date_modified_gmt' => wc_rest_prepare_date_response(strtotime($attachment_post->post_modified_gmt)),
+            'src'               => current($attachment),
+            'name'              => get_the_title($attachment_id),
+            'alt'               => get_post_meta($attachment_id, '_wp_attachment_image_alt', true),
+        );
+    }
+
+    $name         = array();
+    $category_ids = array();
+    $category_ids = array_merge($category_ids, $product->get_category_ids());
+
+    foreach ($category_ids as $category) {
+        $categorys = get_term_by('id', $category, 'product_cat', 'ARRAY_A');
+        $name[] = [
+            "name" => $categorys['name']
+        ];
+    }
+
+    $data = [];
+
+    $data['id'] = $product->get_id();
+    $data['name'] = $product->get_title();
+    $data['slug'] = $product->get_slug();
+    $data['sku'] = $product->get_sku();
+    $data['category'] = $name;
+    $data['short_description'] = $product->get_short_description();
+    $data['description'] = $product->get_description();
+    $data['price'] =  intval($product->get_price());
+    $data['sale_price'] = intval($product->get_sale_price());
+    $data['featuredImage'] = wp_get_attachment_image_url($product->get_image_id(), 'full');
+    $data['ratings'] = intval($product->get_average_rating());
+    $data['gallery'] = $images;
+    $data['stock_status'] = $product->get_stock_status();
+    return $data;
 }
 
 // get all customer
@@ -304,16 +360,21 @@ function get_all_data_in_format_wc_products($products)
     $data = [];
     $i = 0;
     foreach ($products as $product) {
+        $categorys = get_term_by('id', $product->get_id(), 'product_cat', 'ARRAY_A');
+        $name[] = [
+            "name" => $categorys['name']
+        ];
 
         $data[$i]['id'] = $product->get_id();
         $data[$i]['name'] = $product->get_title();
         $data[$i]['slug'] = $product->get_slug();
+        $data[$i]['sku'] = $product->get_sku();
+        $data[$i]['category'] = $name;
         $data[$i]['price'] =  intval($product->get_price());
         $data[$i]['sale_price'] = intval($product->get_sale_price());
         $data[$i]['featuredImage'] = wp_get_attachment_image_url($product->get_image_id(), 'full');
         $data[$i]['ratings'] = intval($product->get_average_rating());
         $data[$i]['seller'] = get_userdata(get_post_field("post_author", $product->get_id()))->user_nicename;
-
         $i++;
     }
 
@@ -392,25 +453,44 @@ function wpc_get_related_products($data)
     $productId =  $data['product_id'];
     $data = [];
     $product = wc_get_related_products($productId);
+    // return $product;
     if (!empty($product)) {
         foreach ($product as $item) {
-            $show = $product = wc_get_product($item);
-            $data[] = array(
-                'product_id' => $item,
-                'product_name' => $show->get_name(),
-                'product_price' => $show->get_price(),
-                'product_image' => get_the_post_thumbnail_url($item, 'thumbnail'),
-            );
+            $show = wc_get_product($item);
+            $categorys = get_term_by('id', $show->get_id(), 'product_cat', 'ARRAY_A');
+            $name[] = [
+                "name" => $categorys['name']
+            ];
+            $current_products = $show->get_children();
+            $datas = [];
+            foreach ($current_products as $variation_id) {
+                $products = wc_get_product($variation_id);
+                $datas[] = $products->get_data();
+            }
+            $data[] = [
+                "product_variant" => $datas,
+                "item_product" => [
+                    'id' => $show->get_id(),
+                    'name' => $show->get_name(),
+                    'slug' => $show->get_slug(),
+                    'sku' => $show->get_sku(),
+                    'category' => $name,
+                    'price' =>  intval($show->get_price()),
+                    'sale_price' => intval($show->get_sale_price()),
+                    'featuredImage' => wp_get_attachment_image_url($show->get_image_id(), 'full'),
+
+                ],
+            ];
         }
+        return $data;
     }
-    return $data;
 }
 
 // check coupond
 function wpc_check_coupon_valid($request)
 {
     $coupons = wc_coupons_enabled();
-return $coupons;
+    return $coupons;
     $response = array();
 
     foreach ($coupons as $coupon) {
@@ -437,7 +517,6 @@ function wpc_get_all_available_payment_gateways()
             $data[$i]['id'] = $gateway->id;
             $data[$i]['title'] = $gateway->title;
             $data[$i]['description'] = $gateway->description;
-
             $i++;
         }
     }
@@ -733,11 +812,12 @@ function get_customer()
     return rest_ensure_response($response_data);
 }
 
+// product vatiation
 function get_product_variation_by_id($data)
 {
     // Get product ID from the request
     $product_id = $data['id'];
-
+    // return $product_id;
     $product = wc_get_product($product_id);
     $current_products = $product->get_children();
     $data = [];
