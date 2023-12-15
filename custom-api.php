@@ -35,7 +35,7 @@ add_action(
             'permission_callback' => '__return_true'
         ));
 
-        register_rest_route('custom/v1', 'products-price/(?P<maxprice>[a-zA-Z0-9-]+)/(?P<minprice>[a-zA-Z0-9-]+)', array(
+        register_rest_route('custom/v1', 'products-price', array(
             'methods' => 'GET',
             'callback' => 'wl_get_product_by_price',
             // 'permission_callback' => '__return_true'
@@ -225,18 +225,51 @@ function wl_get_product($req)
     return wpc_error_404();
 }
 
-// get product by slug
+// get product within_ price
 function wl_get_product_by_price($req)
 {
-    return $req;
-    $slug = $req['slug'];
-    $productId = get_page_by_path($slug, OBJECT, 'product');
-    if (!empty($productId)) {
-        $product = wc_get_product($productId);
-        return single_product_data($product);
+   // Your code to retrieve products within the price range
+    // Use WooCommerce functions to query the products
+
+    $min_price = isset($_GET['min_price']) ? floatval($_GET['min_price']) : 0;
+    $max_price = isset($_GET['max_price']) ? floatval($_GET['max_price']) : PHP_FLOAT_MAX;
+
+    $args = array(
+        'post_type'      => 'product',
+        'posts_per_page' => -1,
+        'meta_query'     => array(
+            array(
+                'key'     => '_price',
+                'value'   => array($min_price, $max_price),
+                'type'    => 'NUMERIC',
+                'compare' => 'BETWEEN',
+            ),
+        ),
+    );
+
+    $query = new WP_Query($args);
+    $respone = [];
+    // Process and return the results
+    $products = array();
+    while ($query->have_posts()) {
+        $query->the_post();
+        $products[] = wc_get_product(get_the_ID())->get_data();
+        
     }
-    return wpc_error_404();
+    foreach($products as $item){
+        $product_variant = get_product_variation_by_id($item);
+        $respone[]=[
+            'product_vari' => $product_variant,
+            'item' => $item
+        ];
+    }
+
+    return $respone;
+    wp_reset_postdata();
+
+    wp_send_json($products);
 }
+// products-in-price-range?min_price=10&max_price=50
 
 // get product by id
 function get_product_by_id($req)
