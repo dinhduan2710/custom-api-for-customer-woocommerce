@@ -97,6 +97,14 @@ add_action(
             // },
         ));
 
+        register_rest_route('custom/v1', '/get-all-wishlist', array(
+            'methods' => 'GET',
+            'callback' => 'get_wishlist',
+            // 'permission_callback' => function () {
+            //     return is_user_logged_in();
+            // },
+        ));
+
         register_rest_route('custom/v1', '/wishlist', array(
             'methods' => array('DELETE'),
             'callback' => 'custom_delete_wishlist',
@@ -145,9 +153,9 @@ add_action(
             ),
         ));
 
-        register_rest_route('custom/v1', '/customer', array(
+        register_rest_route('custom/v1', '/products-by-attribute', array(
             'methods' => 'GET',
-            'callback' => 'get_customer',
+            'callback' => 'custom_get_products_by_attribute',
         ));
     }
 );
@@ -155,20 +163,26 @@ add_action(
 //  get All product
 function wl_get_all_products()
 {
-    $products = wc_get_products(array(
-        "status" => "published"
-    ));
-    $data = [];
-    $product = get_all_data_in_format_wc_products($products);
+    $args = array(
+        'limit' => 10,
+        'orderby' => 'date',
+        'order' => 'DESC'
 
-    foreach ($product as $items) {
-        $product_variant = get_product_variation_by_id($items);
-        $data[] = [
-            "product_variant" => $product_variant,
-            "item_product" => $items,
-        ];
+    );
+
+    // Perform Query
+    $query = new WC_Product_Query($args);
+    $data = [];
+    // Collect Product Object
+    $products = $query->get_products();
+    // Loop through products
+    if (!empty($products)) {
+
+        foreach ($products as $product) {
+            $data[] = single_product_data($product);
+        }
+        return $data;
     }
-    return $data;
 }
 
 //  get all categories 
@@ -200,7 +214,7 @@ function wl_get_all_categories()
     return $data;
 }
 
-// get product by category
+// get product by categories
 function wl_get_categories_products($req)
 {
     $slug = $req['slug'];
@@ -210,7 +224,17 @@ function wl_get_categories_products($req)
     if (count($products) == 0) {
         return wpc_error_404();
     }
-    return get_all_data_in_format_wc_products($products);
+    $product = get_all_data_in_format_wc_products($products);
+
+    $data = [];
+    foreach ($product as $items) {
+        $product_variant = get_product_variation_by_id($items);
+        $data[] = [
+            "product_variant" => $product_variant,
+            "item_product" => $items,
+        ];
+    }
+    return $data;
 }
 
 // get product by slug
@@ -228,9 +252,6 @@ function wl_get_product($req)
 // get product within_ price
 function wl_get_product_by_price($req)
 {
-   // Your code to retrieve products within the price range
-    // Use WooCommerce functions to query the products
-
     $min_price = isset($_GET['min_price']) ? floatval($_GET['min_price']) : 0;
     $max_price = isset($_GET['max_price']) ? floatval($_GET['max_price']) : PHP_FLOAT_MAX;
 
@@ -249,91 +270,157 @@ function wl_get_product_by_price($req)
 
     $query = new WP_Query($args);
     $respone = [];
-    // Process and return the results
+
     $products = array();
     while ($query->have_posts()) {
         $query->the_post();
         $products[] = wc_get_product(get_the_ID())->get_data();
-        
     }
-    foreach($products as $item){
+    foreach ($products as $item) {
         $product_variant = get_product_variation_by_id($item);
-        $respone[]=[
-            'product_vari' => $product_variant,
-            'item' => $item
+        $respone[] = [
+            'product_variant_data' => $product_variant,
+            'data_product' => $item
         ];
     }
 
-    return $respone;
     wp_reset_postdata();
 
-    wp_send_json($products);
+    wp_send_json($respone);
 }
-// products-in-price-range?min_price=10&max_price=50
 
 // get product by id
 function get_product_by_id($req)
 {
     // Get product ID from the request
     $product_id = $req['id'];
-    // Get product data
     $product = wc_get_product($product_id);
-    $images         = array();
-    $attachment_ids = array();
-    if ($product->get_gallery_image_ids()) {
-        $attachment_ids[] = $product->get_gallery_image_ids();
-    }
-    $attachment_ids = array_merge($attachment_ids, $product->get_gallery_image_ids());
-    foreach ($attachment_ids as $attachment_id) {
-        $attachment_post = get_post($attachment_id);
-        if (is_null($attachment_post)) {
-            continue;
-        }
+    return single_product_data($product);
+}
 
-        $attachment = wp_get_attachment_image_src($attachment_id, 'full');
-        if (!is_array($attachment)) {
-            continue;
-        }
-
-        $images[] = array(
-            'id'                => (int) $attachment_id,
-            'date_created'      => wc_rest_prepare_date_response($attachment_post->post_date, false),
-            'date_created_gmt'  => wc_rest_prepare_date_response(strtotime($attachment_post->post_date_gmt)),
-            'date_modified'     => wc_rest_prepare_date_response($attachment_post->post_modified, false),
-            'date_modified_gmt' => wc_rest_prepare_date_response(strtotime($attachment_post->post_modified_gmt)),
-            'src'               => current($attachment),
-            'name'              => get_the_title($attachment_id),
-            'alt'               => get_post_meta($attachment_id, '_wp_attachment_image_alt', true),
-        );
-    }
-
-    $name         = array();
-    $category_ids = array();
-    $category_ids = array_merge($category_ids, $product->get_category_ids());
-
-    foreach ($category_ids as $category) {
-        $categorys = get_term_by('id', $category, 'product_cat', 'ARRAY_A');
-        $name[] = [
-            "name" => $categorys['name']
-        ];
-    }
-
+// product vatiation
+function get_product_variation_by_id($data)
+{
+    // Get product ID from the request
+    $product_id = $data['id'];
+    // return $product_id;
+    $product = wc_get_product($product_id);
+    $current_products = $product->get_children();
     $data = [];
-
-    $data['id'] = $product->get_id();
-    $data['name'] = $product->get_title();
-    $data['slug'] = $product->get_slug();
-    $data['sku'] = $product->get_sku();
-    $data['category'] = $name;
-    $data['short_description'] = $product->get_short_description();
-    $data['description'] = $product->get_description();
-    $data['price'] =  intval($product->get_price());
-    $data['sale_price'] = intval($product->get_sale_price());
-    $data['featuredImage'] = wp_get_attachment_image_url($product->get_image_id(), 'full');
-    $data['ratings'] = intval($product->get_average_rating());
-    $data['gallery'] = $images;
-    $data['stock_status'] = $product->get_stock_status();
+    foreach ($current_products as $variation_id) {
+        $products = wc_get_product($variation_id);
+        $data[] = $products->get_data();
+    }
     return $data;
+}
+
+//get product relates
+function wpc_get_related_products($data)
+{
+    $productId =  $data['product_id'];
+    $data = [];
+    $product = wc_get_related_products($productId);
+
+    if (!empty($product)) {
+        foreach ($product as $item) {
+            $show = wc_get_product($item);
+            $data[] = single_product_data($show);
+        }
+        return $data;
+    }
+}
+
+// product by attribute
+function custom_get_products_by_attribute(WP_REST_Request $request)
+{
+    $parameters = $request->get_json_params();
+
+    $color = $parameters['color'] ? $parameters['color'] : " ";
+    $marterial = $parameters['material'] ? $parameters['material'] : " ";
+    $style = $parameters['style'] ? $parameters['style'] : " ";
+
+    if (!$parameters) {
+        return wl_get_all_products();
+    }
+
+    $args = array(
+        'post_type' => 'product',
+        'posts_per_page' => -1,
+    );
+
+    $products_query = new WP_Query($args);
+    $products = array();
+
+    if ($products_query->have_posts()) {
+        while ($products_query->have_posts()) {
+            $products_query->the_post();
+            $product = wc_get_product(get_the_ID());
+
+            // Get product attributes
+            $attributes = $product->get_attributes();
+
+            $product_attributes = array();
+
+            foreach ($attributes as $attribute) {
+                $product_attributes[] = [
+                    "name" => $attribute->get_name(),
+                    "option" => $attribute->get_options()
+                ];
+            }
+            if ($product_attributes) {
+                $products[] = [
+                    'id' => $product->get_id(),
+                    'name' => $product->get_name(),
+                    'price' =>  intval($product->get_price()),
+                    'sale_price' => intval($product->get_sale_price()),
+                    'slug' => $product->get_slug(),
+                    'sku' => $product->get_sku(),
+                    'attributes' => $product_attributes,
+                    'thumbl' => wp_get_attachment_image_url($product->get_image_id(), 'full'),
+                ];
+            }
+        }
+    }
+    wp_reset_postdata();
+    $i = 0;
+    $respone = [];
+
+    foreach ($products as $items) {
+        $product = wc_get_product($items['id']);
+        // return $items['attributes'];
+        foreach ($items['attributes'] as $item) {
+            $name = $item['name'];
+
+            $option = $item['option'];
+            if ($name = "color" || $name = "material" || $name = "style") {
+
+                $lowercaseArray = array_map('convertToLowerCase', $option);
+                if ($color != "") {
+                    $commonValues_color = array_intersect($color, $lowercaseArray);
+                }
+
+                if ($marterial != "") {
+                    $commonValues_material = array_intersect($marterial, $lowercaseArray);
+                }
+
+                if ($style != "") {
+                    $commonValues_style = array_intersect($style, $lowercaseArray);
+                }
+                // return $commonValues_color;
+                if (!empty($commonValues_color) || !empty($commonValues_material) || !empty($commonValues_style)) {
+                    $respone[] = single_product_data($product);
+                }
+            } else {
+                return "product not found";
+            }
+        }
+    }
+    return new WP_REST_Response($respone, 200);
+}
+
+function convertToLowerCase($str)
+{
+    return strtolower($str);
 }
 
 // get all customer
@@ -345,7 +432,7 @@ function wl_get_all_customers()
         'order'   => 'ASC'
     );
 
-    $customer = new WC_Customer(15);
+    $customer = new WC_Customer($args);
 
     $username     = $customer->get_username(); // Get username
     $user_email   = $customer->get_email(); // Get account email
@@ -376,7 +463,7 @@ function wl_get_all_customers()
     $shipping_country    = $customer->get_shipping_country();
 
 
-    return $shipping_country;
+    return $customer;
 }
 
 // get mess err
@@ -392,17 +479,15 @@ function get_all_data_in_format_wc_products($products)
 {
     $data = [];
     $i = 0;
+    $name = [];
     foreach ($products as $product) {
-        $categorys = get_term_by('id', $product->get_id(), 'product_cat', 'ARRAY_A');
-        $name[] = [
-            "name" => $categorys['name']
-        ];
+        $category_name = wp_get_post_terms($product->get_id(), 'product_cat', array('fields' => 'names'));
 
         $data[$i]['id'] = $product->get_id();
         $data[$i]['name'] = $product->get_title();
         $data[$i]['slug'] = $product->get_slug();
         $data[$i]['sku'] = $product->get_sku();
-        $data[$i]['category'] = $name;
+        $data[$i]['category'] = $category_name;
         $data[$i]['price'] =  intval($product->get_price());
         $data[$i]['sale_price'] = intval($product->get_sale_price());
         $data[$i]['featuredImage'] = wp_get_attachment_image_url($product->get_image_id(), 'full');
@@ -414,6 +499,7 @@ function get_all_data_in_format_wc_products($products)
     return $data;
 }
 
+// format data product
 function single_product_data($product)
 {
     $data = [];
@@ -424,6 +510,7 @@ function single_product_data($product)
     $data['id'] = $product->get_id();
     $data['name'] = $product->get_title();
     $data['slug'] = $product->get_slug();
+    $data['sku'] = $product->get_sku();
     $data['type'] = $product->get_type();
     $data['price'] = $product->get_price();
     $data['salePrice'] = $product->get_sale_price();
@@ -431,7 +518,7 @@ function single_product_data($product)
     $data['ratings'] = $product->get_average_rating();
     $data['shortDescription'] = $product->get_short_description();
     $data['description'] = $product->get_description();
-    $data['categories'] = get_the_terms($product->get_id(), 'product_cat');
+    $data['categories'] = wp_get_post_terms($product->get_id(), 'product_cat', array('fields' => 'names'));
     $data['seller'] = get_userdata(get_post_field("post_author", $product->get_id()))->user_nicename;
     $data['isDownloadable'] = $product->is_downloadable();
     $data['crossSellCount'] = count($product->get_cross_sell_ids());
@@ -480,44 +567,6 @@ function single_product_data($product)
     return $data;
 }
 
-//get product relates
-function wpc_get_related_products($data)
-{
-    $productId =  $data['product_id'];
-    $data = [];
-    $product = wc_get_related_products($productId);
-    // return $product;
-    if (!empty($product)) {
-        foreach ($product as $item) {
-            $show = wc_get_product($item);
-            $categorys = get_term_by('id', $show->get_id(), 'product_cat', 'ARRAY_A');
-            $name[] = [
-                "name" => $categorys['name']
-            ];
-            $current_products = $show->get_children();
-            $datas = [];
-            foreach ($current_products as $variation_id) {
-                $products = wc_get_product($variation_id);
-                $datas[] = $products->get_data();
-            }
-            $data[] = [
-                "product_variant" => $datas,
-                "item_product" => [
-                    'id' => $show->get_id(),
-                    'name' => $show->get_name(),
-                    'slug' => $show->get_slug(),
-                    'sku' => $show->get_sku(),
-                    'category' => $name,
-                    'price' =>  intval($show->get_price()),
-                    'sale_price' => intval($show->get_sale_price()),
-                    'featuredImage' => wp_get_attachment_image_url($show->get_image_id(), 'full'),
-
-                ],
-            ];
-        }
-        return $data;
-    }
-}
 
 // check coupond
 function wpc_check_coupon_valid($request)
@@ -587,6 +636,27 @@ function custom_get_wishlist(WP_REST_Request $request)
 
     // Return the wishlist data
     return new WP_REST_Response($wishlist_data, 200);
+}
+
+// get wish list
+function get_wishlist(WP_REST_Request $request)
+{
+    $wishlists = get_all_wishlists_for_admin(); // Implement this function to get wishlists
+
+    return rest_ensure_response($wishlists);
+}
+
+function get_all_wishlists_for_admin()
+{
+    // Example: Get all wishlists from the database
+    $args = array(
+        'post_type' => 'wishlist', // Adjust to your custom post type if needed
+        'posts_per_page' => -1,
+    );
+    return $args;
+    $wishlists = get_posts($args);
+
+    return $wishlists;
 }
 
 // add wishlist
@@ -828,35 +898,85 @@ function custom_get_product_items_by_order_id($data)
     return rest_ensure_response($response_data);
 }
 
-// get information customer
-function get_customer()
+// update customer
+function update_customer_info(WP_REST_Request $request)
 {
+
+    $parameters = $request->get_json_params();
+
+    $account_first_name = $parameters['account_first_name'] ? $parameters['account_first_name'] : " ";
+    $account_last_name = $parameters['account_last_name'] ? $parameters['account_last_name'] : " ";
+    $account_display_name = $parameters['account_display_name'] ? $parameters['account_display_name'] : " ";
+
+    $pass_cur             = !empty($_POST['password_current']) ? $_POST['password_current'] : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash
+    $pass1                = !empty($_POST['password_1']) ? $_POST['password_1'] : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash
+    $pass2                = !empty($_POST['password_2']) ? $_POST['password_2'] : ''; // p
+
+    $customer_id = $request['id'];
+
     $user_id = get_current_user_id();
-    $customer_data = get_userdata($user_id);
-    $response_data = array(
-        'customer_info' => array(
-            'customer_id' => $user_id,
-            'display_name' => $customer_data->display_name,
-            'customer_username' => $customer_data->user_login,
-            'customer_email' => $customer_data->user_email,
-        ),
-    );
 
-    return rest_ensure_response($response_data);
-}
-
-// product vatiation
-function get_product_variation_by_id($data)
-{
-    // Get product ID from the request
-    $product_id = $data['id'];
-    // return $product_id;
-    $product = wc_get_product($product_id);
-    $current_products = $product->get_children();
-    $data = [];
-    foreach ($current_products as $variation_id) {
-        $products = wc_get_product($variation_id);
-        $data[] = $products->get_data();
+    if ($customer_id != $user_id) {
+        return;
     }
-    return $data;
+    // Current user data.
+    $current_user       = get_user_by('id', $user_id);
+    $current_first_name = $current_user->first_name;
+    $current_last_name  = $current_user->last_name;
+    $current_email      = $current_user->user_email;
+    $current_display_name = $current_user->display_name;
+
+    // New user data.
+    $user               = new stdClass();
+    $user->ID           = $user_id;
+    $user->first_name   = $account_first_name;
+    $user->last_name    = $account_last_name;
+    $user->display_name = $account_display_name;
+    // Prevent display name to be changed to email.
+    if (is_email($account_display_name)) {
+        wc_add_notice(__('Display name cannot be changed to email address due to privacy concern.', 'woocommerce'), 'error');
+    }
+
+
+    if (!empty($pass_cur) && empty($pass1) && empty($pass2)) {
+        wc_add_notice(__('Please fill out all password fields.', 'woocommerce'), 'error');
+        $save_pass = false;
+    } elseif (!empty($pass1) && empty($pass_cur)) {
+        wc_add_notice(__('Please enter your current password.', 'woocommerce'), 'error');
+        $save_pass = false;
+    } elseif (!empty($pass1) && empty($pass2)) {
+        wc_add_notice(__('Please re-enter your password.', 'woocommerce'), 'error');
+        $save_pass = false;
+    } elseif ((!empty($pass1) || !empty($pass2)) && $pass1 !== $pass2) {
+        wc_add_notice(__('New passwords do not match.', 'woocommerce'), 'error');
+        $save_pass = false;
+    } elseif (!empty($pass1) && !wp_check_password($pass_cur, $current_user->user_pass, $current_user->ID)) {
+        wc_add_notice(__('Your current password is incorrect.', 'woocommerce'), 'error');
+        $save_pass = false;
+    }
+
+    if ($pass1 && $save_pass) {
+        $user->user_pass = $pass1;
+    }
+    $customer = new WC_Customer($user_id);
+    if ($account_first_name != $current_first_name) {
+        $customer->set_first_name($account_first_name);
+    }
+    if ($account_last_name != $current_last_name) {
+        $customer->set_last_name($account_last_name);
+    }
+    if ($account_display_name != $current_display_name) {
+        $customer->set_first_name($account_display_name);
+    }
+
+    $customer->save();
+
+    return $customer;
+    // Update customer information using WooCommerce functions or custom code
+    // update_user_meta($customer_id, 'first_name', $account_first_name);
+    // update_user_meta($customer_id, 'last_name', $account_last_name);
+    // update_user_meta($customer_id, 'account_display_name', $account_display_name);
+
+    // Return a response
+    return new WP_REST_Response('Customer information updated successfully', 200);
 }
