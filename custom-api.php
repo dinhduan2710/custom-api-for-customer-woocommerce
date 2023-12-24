@@ -17,9 +17,27 @@ add_action(
             'permission_callback' => '__return_true'
         ));
 
+        register_rest_route('custom/v1', 'product-sales', array(
+            'methods' => 'GET',
+            'callback' => 'get_product_sale',
+            'permission_callback' => '__return_true'
+        ));
+
         register_rest_route('custom/v1', 'categories', array(
             'methods' => 'GET',
-            'callback' => 'wl_get_all_categories',
+            'callback' => 'custom_get_frontend_product_menus',
+            'permission_callback' => '__return_true'
+        ));
+
+        register_rest_route('custom/v1', 'all-categories', array(
+            'methods' => 'GET',
+            'callback' => 'custom_get_product_categories',
+            'permission_callback' => '__return_true'
+        ));
+
+        register_rest_route('custom/v1', 'attributes', array(
+            'methods' => 'GET',
+            'callback' => 'wl_get_all_attribute',
             'permission_callback' => '__return_true'
         ));
 
@@ -38,17 +56,19 @@ add_action(
         register_rest_route('custom/v1', 'products-price', array(
             'methods' => 'GET',
             'callback' => 'wl_get_product_by_price',
-            // 'permission_callback' => '__return_true'
+            'permission_callback' => '__return_true'
         ));
 
         register_rest_route('custom/v1', 'products-details/(?P<id>\d+)', array(
             'methods' => 'GET',
             'callback' => 'get_product_by_id',
+            'permission_callback' => '__return_true'
         ));
 
         register_rest_route('custom/v1', 'product-variations/(?P<id>\d+)', array(
             'methods' => 'GET',
             'callback' => 'get_product_variation_by_id',
+            'permission_callback' => '__return_true'
         ));
 
         register_rest_route('custom/v1', 'customers', array(
@@ -57,9 +77,9 @@ add_action(
             'permission_callback' => '__return_true'
         ));
 
-        register_rest_route('custom/v1', 'check-coupon', array(
-            'methods' => 'GET',
-            'callback' => 'wpc_check_coupon_valid',
+        register_rest_route('custom/v1', '/coupon/check', array(
+            'methods' => 'POST',
+            'callback' => 'custom_coupon_check',
             'permission_callback' => '__return_true'
         ));
 
@@ -81,30 +101,6 @@ add_action(
             'permission_callback' => '__return_true'
         ));
 
-        register_rest_route('custom/v1', '/add-wishlist', array(
-            'methods' => 'POST',
-            'callback' => 'custom_add_to_wishlist',
-            // 'permission_callback' => function () {
-            //     return is_user_logged_in();
-            // },
-        ));
-
-        register_rest_route('custom/v1', '/get-wishlist', array(
-            'methods' => 'GET',
-            'callback' => 'custom_get_wishlist',
-            // 'permission_callback' => function () {
-            //     return is_user_logged_in();
-            // },
-        ));
-
-        register_rest_route('custom/v1', '/wishlist', array(
-            'methods' => array('DELETE'),
-            'callback' => 'custom_delete_wishlist',
-            // 'permission_callback' => function () {
-            //     return is_user_logged_in();
-            // },
-        ));
-
         register_rest_route('custom/v1', '/create-order', array(
             'methods'  => 'POST',
             'callback' => 'custom_create_order',
@@ -124,13 +120,13 @@ add_action(
         register_rest_route('custom/v1', '/order/(?P<id>\d+)', array(
             'methods' => 'GET',
             'callback' => 'custom_get_order_by_id',
-            'args' => array(
-                'id' => array(
-                    'validate_callback' => function ($param, $request, $key) {
-                        return is_numeric($param);
-                    },
-                ),
-            ),
+            // 'args' => array(
+            //     'id' => array(
+            //         'validate_callback' => function ($param, $request, $key) {
+            //             return is_numeric($param);
+            //         },
+            //     ),
+            // ),
         ));
 
         register_rest_route('custom/v1', '/order/(?P<id>\d+)/products', array(
@@ -145,62 +141,164 @@ add_action(
             ),
         ));
 
-        register_rest_route('custom/v1', '/customer', array(
+        register_rest_route('product/v1', '/products/attributes', array(
             'methods' => 'GET',
-            'callback' => 'get_customer',
+            'callback' => 'custom_product_filter_by_attributes',
+        ));
+
+        register_rest_route('product/v1', '/products/filter', array(
+            'methods' => 'GET',
+            'callback' => 'custom_filter_products',
+            'permission_callback' => '__return_true', // Set permission callback as needed
         ));
     }
 );
 
 //  get All product
-function wl_get_all_products()
+function wl_get_all_products($data)
 {
-    $products = wc_get_products(array(
-        "status" => "published"
-    ));
-    $data = [];
-    $product = get_all_data_in_format_wc_products($products);
+    $limit = isset($data['limit']) ? $data['limit'] : 10;
+    $order = isset($data['order']) ? $data['order'] : 'desc';
 
-    foreach ($product as $items) {
-        $product_variant = get_product_variation_by_id($items);
-        $data[] = [
-            "product_variant" => $product_variant,
-            "item_product" => $items,
-        ];
+    $args = array(
+        'limit' => $limit,
+        'orderby' => 'date',
+        'order' => $order
+    );
+
+    // Perform Query
+    $query = new WC_Product_Query($args);
+    $data = [];
+    // Collect Product Object
+    $products = $query->get_products();
+    // Loop through products
+    if (!empty($products)) {
+
+        foreach ($products as $product) {
+            $data[] = single_product_data($product);
+        }
+        return $data;
     }
-    return $data;
+}
+
+// product sale
+function get_product_sale()
+{
+    $args = array(
+        'post_type' => 'product',
+        'posts_per_page' => -1,
+        'meta_query' => array(
+            array(
+                'key' => '_sale_price',
+                'value' => 0,
+                'compare' => '>',
+                'type' => 'NUMERIC',
+            ),
+        ),
+    );
+
+    // Query WooCommerce products
+    $query = new WP_Query($args);
+
+    $sale_products = array();
+
+    // Loop through the products
+    while ($query->have_posts()) {
+        $query->the_post();
+        $product = wc_get_product(get_the_ID());
+
+        $sale_products[] = single_product_data($product);
+    }
+
+    wp_reset_postdata();
+
+    return rest_ensure_response($sale_products);
 }
 
 //  get all categories 
-function wl_get_all_categories()
+function custom_get_frontend_product_menus()
 {
-    $data = [];
-    $i = 0;
-    $orderby = 'name';
+    $product_categories = get_terms(array(
+        'taxonomy' => 'product_cat',
+        'hide_empty' => false, // Set to true if you want to exclude empty categories
+        'parent' => 0, // Get top-level categories
+    ));
 
-    $order = 'asc';
-    $hide_empty = false;
-    $args = array(
-        'orderby'    => $orderby,
-        'order'      => $order,
-        'hide_empty' => $hide_empty,
+    $menus = array();
 
-    );
-
-    $product_categories = get_terms('product_cat', $args);
-    foreach ($product_categories as $catg) {
-        $thumbnail_id = get_term_meta($catg->term_id, 'thumbnail_id', true);
-        $data[$i]['id'] = $catg->term_id;
-        $data[$i]['name'] = $catg->name;
-        $data[$i]['slug'] = $catg->slug;
-        $data[$i]['totalProducts'] = $catg->count;
-        $data[$i]['featuredImage'] = wp_get_attachment_url($thumbnail_id);
-        $i++;
+    foreach ($product_categories as $category) {
+        $menus[] = custom_get_product_menu_hierarchy($category);
     }
-    return $data;
+
+    return rest_ensure_response($menus);
 }
 
-// get product by category
+function custom_get_product_menu_hierarchy($category)
+{
+    $menu_item = array(
+        'id' => $category->term_id,
+        'name' => $category->name,
+        'slug' => $category->slug,
+        'link' => get_term_link($category), // Get the category archive link
+        'children' => array(),
+    );
+
+    // Get the children of the current category
+    $children = get_terms(array(
+        'taxonomy' => 'product_cat',
+        'hide_empty' => false, // Set to true if you want to exclude empty categories
+        'parent' => $category->term_id,
+    ));
+
+    foreach ($children as $child) {
+        $menu_item['children'][] = custom_get_product_menu_hierarchy($child);
+    }
+
+    return $menu_item;
+}
+
+// get all category product
+function custom_get_product_categories()
+{
+    $product_categories = get_terms(array(
+        'taxonomy' => 'product_cat',
+        'hide_empty' => false, // Set to true if you want to exclude empty categories
+    ));
+
+    $categories = array();
+
+    foreach ($product_categories as $category) {
+        $categories[] = array(
+            'id' => $category->term_id,
+            'name' => $category->name,
+            'slug' => $category->slug,
+            'parent' => $category->parent,
+            'link' => get_term_link($category), // Get the category archive link
+            // Add more category details as needed
+        );
+    }
+
+    return rest_ensure_response($categories);
+}
+
+//  get all attribute 
+function wl_get_all_attribute()
+{
+    $attribute_taxonomies = wc_get_attribute_taxonomies();
+    $taxonomy_terms = array();
+
+    if ($attribute_taxonomies) {
+        foreach ($attribute_taxonomies as $tax) {
+            if (taxonomy_exists(wc_attribute_taxonomy_name($tax->attribute_name))) {
+                $taxonomy_terms[$tax->attribute_name] = get_terms(wc_attribute_taxonomy_name($tax->attribute_name), 'orderby=name&hide_empty=0');
+            }
+        }
+    }
+
+    return $taxonomy_terms;
+}
+
+// get product by categories
 function wl_get_categories_products($req)
 {
     $slug = $req['slug'];
@@ -210,7 +308,17 @@ function wl_get_categories_products($req)
     if (count($products) == 0) {
         return wpc_error_404();
     }
-    return get_all_data_in_format_wc_products($products);
+    $product = get_all_data_in_format_wc_products($products);
+
+    $data = [];
+    foreach ($product as $items) {
+        $product_variant = get_product_variation_by_id($items);
+        $data[] = [
+            "product_variant" => $product_variant,
+            "item_product" => $items,
+        ];
+    }
+    return $data;
 }
 
 // get product by slug
@@ -228,9 +336,6 @@ function wl_get_product($req)
 // get product within_ price
 function wl_get_product_by_price($req)
 {
-   // Your code to retrieve products within the price range
-    // Use WooCommerce functions to query the products
-
     $min_price = isset($_GET['min_price']) ? floatval($_GET['min_price']) : 0;
     $max_price = isset($_GET['max_price']) ? floatval($_GET['max_price']) : PHP_FLOAT_MAX;
 
@@ -249,91 +354,64 @@ function wl_get_product_by_price($req)
 
     $query = new WP_Query($args);
     $respone = [];
-    // Process and return the results
+
     $products = array();
     while ($query->have_posts()) {
         $query->the_post();
         $products[] = wc_get_product(get_the_ID())->get_data();
-        
     }
-    foreach($products as $item){
+    foreach ($products as $item) {
         $product_variant = get_product_variation_by_id($item);
-        $respone[]=[
-            'product_vari' => $product_variant,
-            'item' => $item
+        $respone[] = [
+            'product_variant_data' => $product_variant,
+            'data_product' => $item
         ];
     }
 
-    return $respone;
     wp_reset_postdata();
 
-    wp_send_json($products);
+    wp_send_json($respone);
 }
-// products-in-price-range?min_price=10&max_price=50
 
 // get product by id
 function get_product_by_id($req)
 {
     // Get product ID from the request
     $product_id = $req['id'];
-    // Get product data
     $product = wc_get_product($product_id);
-    $images         = array();
-    $attachment_ids = array();
-    if ($product->get_gallery_image_ids()) {
-        $attachment_ids[] = $product->get_gallery_image_ids();
-    }
-    $attachment_ids = array_merge($attachment_ids, $product->get_gallery_image_ids());
-    foreach ($attachment_ids as $attachment_id) {
-        $attachment_post = get_post($attachment_id);
-        if (is_null($attachment_post)) {
-            continue;
-        }
+    return single_product_data($product);
+}
 
-        $attachment = wp_get_attachment_image_src($attachment_id, 'full');
-        if (!is_array($attachment)) {
-            continue;
-        }
-
-        $images[] = array(
-            'id'                => (int) $attachment_id,
-            'date_created'      => wc_rest_prepare_date_response($attachment_post->post_date, false),
-            'date_created_gmt'  => wc_rest_prepare_date_response(strtotime($attachment_post->post_date_gmt)),
-            'date_modified'     => wc_rest_prepare_date_response($attachment_post->post_modified, false),
-            'date_modified_gmt' => wc_rest_prepare_date_response(strtotime($attachment_post->post_modified_gmt)),
-            'src'               => current($attachment),
-            'name'              => get_the_title($attachment_id),
-            'alt'               => get_post_meta($attachment_id, '_wp_attachment_image_alt', true),
-        );
-    }
-
-    $name         = array();
-    $category_ids = array();
-    $category_ids = array_merge($category_ids, $product->get_category_ids());
-
-    foreach ($category_ids as $category) {
-        $categorys = get_term_by('id', $category, 'product_cat', 'ARRAY_A');
-        $name[] = [
-            "name" => $categorys['name']
-        ];
-    }
-
+// product vatiation
+function get_product_variation_by_id($data)
+{
+    // Get product ID from the request
+    $product_id = $data['id'];
+    // return $product_id;
+    $product = wc_get_product($product_id);
+    $current_products = $product->get_children();
     $data = [];
-
-    $data['id'] = $product->get_id();
-    $data['name'] = $product->get_title();
-    $data['slug'] = $product->get_slug();
-    $data['sku'] = $product->get_sku();
-    $data['category'] = $name;
-    $data['short_description'] = $product->get_short_description();
-    $data['description'] = $product->get_description();
-    $data['price'] =  intval($product->get_price());
-    $data['sale_price'] = intval($product->get_sale_price());
-    $data['featuredImage'] = wp_get_attachment_image_url($product->get_image_id(), 'full');
-    $data['ratings'] = intval($product->get_average_rating());
-    $data['gallery'] = $images;
-    $data['stock_status'] = $product->get_stock_status();
+    foreach ($current_products as $variation_id) {
+        $products = wc_get_product($variation_id);
+        $data[] = $products->get_data();
+    }
     return $data;
+}
+
+//get product relates
+function wpc_get_related_products($data)
+{
+    $productId =  $data['product_id'];
+    $data = [];
+    $product = wc_get_related_products($productId);
+
+    if (!empty($product)) {
+        foreach ($product as $item) {
+            $show = wc_get_product($item);
+            $data[] = single_product_data($show);
+        }
+        return $data;
+    }
 }
 
 // get all customer
@@ -345,7 +423,7 @@ function wl_get_all_customers()
         'order'   => 'ASC'
     );
 
-    $customer = new WC_Customer(15);
+    $customer = new WC_Customer($args);
 
     $username     = $customer->get_username(); // Get username
     $user_email   = $customer->get_email(); // Get account email
@@ -376,7 +454,7 @@ function wl_get_all_customers()
     $shipping_country    = $customer->get_shipping_country();
 
 
-    return $shipping_country;
+    return $customer;
 }
 
 // get mess err
@@ -392,17 +470,15 @@ function get_all_data_in_format_wc_products($products)
 {
     $data = [];
     $i = 0;
+    $name = [];
     foreach ($products as $product) {
-        $categorys = get_term_by('id', $product->get_id(), 'product_cat', 'ARRAY_A');
-        $name[] = [
-            "name" => $categorys['name']
-        ];
+        $category_name = wp_get_post_terms($product->get_id(), 'product_cat', array('fields' => 'names'));
 
         $data[$i]['id'] = $product->get_id();
         $data[$i]['name'] = $product->get_title();
         $data[$i]['slug'] = $product->get_slug();
         $data[$i]['sku'] = $product->get_sku();
-        $data[$i]['category'] = $name;
+        $data[$i]['category'] = $category_name;
         $data[$i]['price'] =  intval($product->get_price());
         $data[$i]['sale_price'] = intval($product->get_sale_price());
         $data[$i]['featuredImage'] = wp_get_attachment_image_url($product->get_image_id(), 'full');
@@ -414,6 +490,7 @@ function get_all_data_in_format_wc_products($products)
     return $data;
 }
 
+// format data product
 function single_product_data($product)
 {
     $data = [];
@@ -424,14 +501,18 @@ function single_product_data($product)
     $data['id'] = $product->get_id();
     $data['name'] = $product->get_title();
     $data['slug'] = $product->get_slug();
+    $data['sku'] = $product->get_sku();
     $data['type'] = $product->get_type();
+    $data['regular_price'] = $product->get_regular_price();
     $data['price'] = $product->get_price();
+    $data['stock_quantity'] = $product->get_stock_quantity();
+    $data['stockstock_status_quantity'] = $product->get_stock_status();
     $data['salePrice'] = $product->get_sale_price();
     $data['featuredImage'] = wp_get_attachment_image_url($product->get_image_id(), 'full');
     $data['ratings'] = $product->get_average_rating();
     $data['shortDescription'] = $product->get_short_description();
     $data['description'] = $product->get_description();
-    $data['categories'] = get_the_terms($product->get_id(), 'product_cat');
+    $data['categories'] = wp_get_post_terms($product->get_id(), 'product_cat', array('fields' => 'names'));
     $data['seller'] = get_userdata(get_post_field("post_author", $product->get_id()))->user_nicename;
     $data['isDownloadable'] = $product->is_downloadable();
     $data['crossSellCount'] = count($product->get_cross_sell_ids());
@@ -480,63 +561,27 @@ function single_product_data($product)
     return $data;
 }
 
-//get product relates
-function wpc_get_related_products($data)
-{
-    $productId =  $data['product_id'];
-    $data = [];
-    $product = wc_get_related_products($productId);
-    // return $product;
-    if (!empty($product)) {
-        foreach ($product as $item) {
-            $show = wc_get_product($item);
-            $categorys = get_term_by('id', $show->get_id(), 'product_cat', 'ARRAY_A');
-            $name[] = [
-                "name" => $categorys['name']
-            ];
-            $current_products = $show->get_children();
-            $datas = [];
-            foreach ($current_products as $variation_id) {
-                $products = wc_get_product($variation_id);
-                $datas[] = $products->get_data();
-            }
-            $data[] = [
-                "product_variant" => $datas,
-                "item_product" => [
-                    'id' => $show->get_id(),
-                    'name' => $show->get_name(),
-                    'slug' => $show->get_slug(),
-                    'sku' => $show->get_sku(),
-                    'category' => $name,
-                    'price' =>  intval($show->get_price()),
-                    'sale_price' => intval($show->get_sale_price()),
-                    'featuredImage' => wp_get_attachment_image_url($show->get_image_id(), 'full'),
-
-                ],
-            ];
-        }
-        return $data;
-    }
-}
-
 // check coupond
-function wpc_check_coupon_valid($request)
+function custom_coupon_check($data)
 {
-    $coupons = wc_coupons_enabled();
-    return $coupons;
-    $response = array();
+    $coupon_code = $data['coupon_code'];
 
-    foreach ($coupons as $coupon) {
-        // Build response for each coupon
-        $response[] = array(
-            'id'            => $coupon->get_id(),
-            'code'          => $coupon->get_code(),
-            'amount'        => $coupon->get_amount(),
-            // Add more fields as needed
+    // Check if the coupon code exists
+    $coupon = new WC_Coupon($coupon_code);
+
+    if ($coupon->get_id()) {
+        $response = array(
+            'status' => 'success',
+            'message' => 'Coupon is valid.',
+        );
+    } else {
+        $response = array(
+            'status' => 'error',
+            'message' => 'Invalid coupon code.',
         );
     }
 
-    return new WP_REST_Response($response, 200);
+    return rest_ensure_response($response);
 }
 
 //  get payment acaiable
@@ -557,109 +602,6 @@ function wpc_get_all_available_payment_gateways()
     return $data;
 }
 
-// get wish list
-function custom_get_wishlist(WP_REST_Request $request)
-{
-    $user_id = get_current_user_id();
-
-    // Retrieve the wishlist from user meta
-    $wishlist = get_user_meta($user_id, 'wishlist', true);
-    // If the wishlist doesn't exist, create an empty array
-    if (!is_array($wishlist)) {
-        $wishlist = array();
-    }
-
-    // Prepare an array to hold product details
-    $wishlist_data = array();
-
-    // Populate the array with product details
-    foreach ($wishlist as $product_id) {
-        $product = wc_get_product($product_id['product_id']);
-        if ($product) {
-            $wishlist_data[] = array(
-                'id' => $product_id,
-                'name' => $product->get_name(),
-                'price' => $product->get_price(),
-                // Add more product details as needed
-            );
-        }
-    }
-
-    // Return the wishlist data
-    return new WP_REST_Response($wishlist_data, 200);
-}
-
-// add wishlist
-function custom_add_to_wishlist(WP_REST_Request $request)
-{
-    $user_id = get_current_user_id();
-    $product_id = $request->get_param('product_id');
-
-    if (empty($product_id)) {
-        return new WP_Error('invalid_product_id', 'Product ID is required.', array('status' => 400));
-    }
-
-    // Check if product exists
-    $product = wc_get_product($product_id);
-    if (!$product) {
-        return new WP_Error('invalid_product', 'Invalid product ID.', array('status' => 400));
-    }
-
-    // Get user's wishlist
-    $wishlist = get_user_meta($user_id, 'wishlist', true);
-    $datetime_now      = new WC_DateTime(); // Get now datetime (from Woocommerce datetime object)
-    $timestamp_now     = $datetime_now->getTimestamp();
-    // Add the product to the wishlist
-    // If the wishlist doesn't exist, create an empty array
-    if (!is_array($wishlist)) {
-        $wishlist = array();
-    }
-
-    $product_id_to_add = $product_id;  // Replace with the actual product ID
-
-    // Check if the product is not already in the wishlist
-    if (!in_array($product_id_to_add, $wishlist)) {
-        $wishlist[] = [
-            "product_id" => $product_id_to_add,
-            "date" => $timestamp_now
-        ];
-    }
-
-    // Update the user's wishlist meta field
-    update_user_meta($user_id, 'wishlist', $wishlist);
-
-    return $wishlist;
-}
-
-//delete wishlist
-function custom_delete_wishlist(WP_REST_Request $request)
-{
-    $user_id = get_current_user_id();
-    $product_id = $request->get_param('product_id');
-
-    if (empty($product_id)) {
-        return new WP_Error('invalid_product_id', 'Product ID is required.', array('status' => 400));
-    }
-
-    // Check if product exists
-    $product = wc_get_product($product_id);
-    if (!$product) {
-        return new WP_Error('invalid_product', 'Invalid product ID.', array('status' => 400));
-    }
-
-    $wishlist = get_user_meta($user_id, 'wishlist', true);
-
-    if (in_array($product_id, $wishlist)) {
-        // Remove product from the wishlist
-        $updated_wishlist = array_diff($wishlist, array($product_id));
-        update_user_meta($user_id, 'wishlist', $updated_wishlist);
-
-        return new WP_REST_Response('Product removed from wishlist.', 200);
-    } else {
-        return new WP_Error('product_not_in_wishlist', 'Product not found in wishlist.', array('status' => 404));
-    }
-}
-
 // create order
 function custom_create_order($request)
 {
@@ -667,6 +609,7 @@ function custom_create_order($request)
     $customer_id = isset($parameters['customer_id']) ? absint($parameters['customer_id']) : get_current_user_id();
     $paymen_cod = $parameters['payment_method'] ? $parameters['payment_method'] : " ";
     $Payment_title = $parameters['payment_method_title'] ? $parameters['payment_method_title'] : " ";
+    $product_variation_data = isset($parameters['products']) ? $parameters['products'] : array();
 
     $billing_address = [
         'first_name' => $parameters['first_name'],
@@ -690,30 +633,69 @@ function custom_create_order($request)
         'country'    => $parameters['country'],
     ];
 
-    // Your order creation logic here
-    $order = wc_create_order();
+    if (empty($customer_id) || empty($product_variation_data)) {
+        return array(
+            'success' => false,
+            'message' => 'Customer data and product variation data are required.',
+        );
+    }
 
-    $order->set_customer_id($customer_id);
+    if (is_wp_error($customer_id)) {
+        return array(
+            'success' => false,
+            'message' => 'Error creating the customer.',
+        );
+    }
+
+    // Your order creation logic here
+    $order = wc_create_order(array('customer_id' => $customer_id));
+    if (is_wp_error($order)) {
+        return array(
+            'success' => false,
+            'message' => 'Error creating the order.',
+        );
+    }
+    $order_id = $order->get_id();
     $order->set_payment_method($paymen_cod);
     $order->set_status('pending');
     $order->set_payment_method_title($Payment_title);
     $order->set_billing_address($billing_address);
     $order->set_shipping_address($shipping_address);
 
-    foreach ($request['products'] as $product) {
-        $order->add_product(wc_get_product($product['id']), $product['quantity']);
+    foreach ($product_variation_data as $variation) {
+        $product_id    = $variation['product_id'];
+        $quantity      = $variation['quantity'];
+        $variation_id  = $variation['variation_id'];
+
+        if ($variation_id) {
+            $product_variation = new WC_Product_Variation($variation_id);
+            if ($product_variation->get_stock_quantity() < $quantity) {
+                return array(
+                    'success' => false,
+                    'message' => 'Quantity in stock is not enough.',
+                );
+            };
+            $args = array();
+            foreach ($product_variation->get_variation_attributes() as $attribute => $attribute_value) {
+                $args['variation'][$attribute] = $attribute_value;
+            }
+            $order->add_product($product_variation, $quantity, $args);
+        } else {
+            $order->add_product(
+                wc_get_product($product_id),
+                $quantity
+            );
+        }
     }
     $order->calculate_totals();
-    $order->save();
-
-    $order_id = $order->get_id();
+    // $order->save();
 
     // Get the WC_Email_New_Order object
     $email_new_order = WC()->mailer()->get_emails()['WC_Email_New_Order'];
 
     // Sending the new Order email notification for an $order_id (order ID)
     $email_new_order->trigger($order_id);
-    // wp_schedule_single_event(time(), 'custom_send_order_email_event', array($order_id));
+    wp_schedule_single_event(time(), 'custom_send_order_email_event', array($order_id));
 
     return array(
         'success' => true,
@@ -737,14 +719,22 @@ function custom_get_orders($request)
     ));
 
     $formatted_orders = array();
-
+    $data = [];
     foreach ($orders as $order) {
+        foreach ($order->get_items() as  $item_key => $item_values) {
+            $item_data = $item_values->get_data();
+            $data[] = [
+                'product_name' => $item_data['name'],
+                'quantity' => $item_data['quantity'],
+                'line_total' => $item_data['total']
+            ];
+        }
         $formatted_orders[] = array(
             'order_id'    => $order->get_id(),
             'order_total' => $order->get_total(),
             'order_date'  => $order->get_date_created(),
-            "order_status" => $order->get_status(),
-            // Add more fields as needed
+            'product_name' => $data,
+            'order_status' => $order->get_status(),
         );
     }
 
@@ -828,35 +818,164 @@ function custom_get_product_items_by_order_id($data)
     return rest_ensure_response($response_data);
 }
 
-// get information customer
-function get_customer()
+// update customer
+function update_customer_info(WP_REST_Request $request)
 {
+
+    $parameters = $request->get_json_params();
+
+    $account_first_name = $parameters['account_first_name'] ? $parameters['account_first_name'] : " ";
+    $account_last_name = $parameters['account_last_name'] ? $parameters['account_last_name'] : " ";
+    $account_display_name = $parameters['account_display_name'] ? $parameters['account_display_name'] : " ";
+
+    $pass_cur             = !empty($_POST['password_current']) ? $_POST['password_current'] : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash
+    $pass1                = !empty($_POST['password_1']) ? $_POST['password_1'] : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash
+    $pass2                = !empty($_POST['password_2']) ? $_POST['password_2'] : ''; // p
+
+    $customer_id = $request['id'];
+
     $user_id = get_current_user_id();
-    $customer_data = get_userdata($user_id);
-    $response_data = array(
-        'customer_info' => array(
-            'customer_id' => $user_id,
-            'display_name' => $customer_data->display_name,
-            'customer_username' => $customer_data->user_login,
-            'customer_email' => $customer_data->user_email,
+
+    if ($customer_id != $user_id) {
+        return;
+    }
+    // Current user data.
+    $current_user       = get_user_by('id', $user_id);
+    $current_first_name = $current_user->first_name;
+    $current_last_name  = $current_user->last_name;
+    $current_email      = $current_user->user_email;
+    $current_display_name = $current_user->display_name;
+
+    // New user data.
+    $user               = new stdClass();
+    $user->ID           = $user_id;
+    $user->first_name   = $account_first_name;
+    $user->last_name    = $account_last_name;
+    $user->display_name = $account_display_name;
+    // Prevent display name to be changed to email.
+    if (is_email($account_display_name)) {
+        wc_add_notice(__('Display name cannot be changed to email address due to privacy concern.', 'woocommerce'), 'error');
+    }
+
+
+    if (!empty($pass_cur) && empty($pass1) && empty($pass2)) {
+        wc_add_notice(__('Please fill out all password fields.', 'woocommerce'), 'error');
+        $save_pass = false;
+    } elseif (!empty($pass1) && empty($pass_cur)) {
+        wc_add_notice(__('Please enter your current password.', 'woocommerce'), 'error');
+        $save_pass = false;
+    } elseif (!empty($pass1) && empty($pass2)) {
+        wc_add_notice(__('Please re-enter your password.', 'woocommerce'), 'error');
+        $save_pass = false;
+    } elseif ((!empty($pass1) || !empty($pass2)) && $pass1 !== $pass2) {
+        wc_add_notice(__('New passwords do not match.', 'woocommerce'), 'error');
+        $save_pass = false;
+    } elseif (!empty($pass1) && !wp_check_password($pass_cur, $current_user->user_pass, $current_user->ID)) {
+        wc_add_notice(__('Your current password is incorrect.', 'woocommerce'), 'error');
+        $save_pass = false;
+    }
+
+    if ($pass1 && $save_pass) {
+        $user->user_pass = $pass1;
+    }
+    $customer = new WC_Customer($user_id);
+    if ($account_first_name != $current_first_name) {
+        $customer->set_first_name($account_first_name);
+    }
+    if ($account_last_name != $current_last_name) {
+        $customer->set_last_name($account_last_name);
+    }
+    if ($account_display_name != $current_display_name) {
+        $customer->set_first_name($account_display_name);
+    }
+
+    $customer->save();
+
+    return $customer;
+    // Update customer information using WooCommerce functions or custom code
+    // update_user_meta($customer_id, 'first_name', $account_first_name);
+    // update_user_meta($customer_id, 'last_name', $account_last_name);
+    // update_user_meta($customer_id, 'account_display_name', $account_display_name);
+
+    // Return a response
+    return new WP_REST_Response('Customer information updated successfully', 200);
+}
+
+// array of attribute terms
+function custom_product_filter_by_attributes($data)
+{
+    $attributes = $data->get_params();
+    if (!$attributes) {
+        return wl_get_all_products($data);
+    }
+    $tax_query = [];
+    foreach ($attributes as $attribute => $terms) {
+        $tax_query[] = array(
+            'taxonomy' => 'pa_' . $attribute, // Adjust the taxonomy based on your attribute
+            'field' => 'slug',
+            'terms' => $terms,
+        );
+    }
+    // Query WooCommerce products with the specified attribute terms
+    $args = array(
+        'post_type' => 'product',
+        'posts_per_page' => -1,
+        'tax_query' => $tax_query,
+    );
+
+    $products = get_posts($args);
+
+    $formatted_products = array();
+
+    foreach ($products as $product) {
+        // $formatted_products[] = wc_get_product($product->ID)->get_data();
+        $show = wc_get_product($product->ID);
+        $formatted_products[] =  single_product_data($show);
+    }
+
+    return rest_ensure_response($formatted_products);
+}
+
+// array of attribute terms and a price range in the query parameters
+// wp-json/custom/v1/products/filter?attributes[color]=red,blue&attributes[size]=small,medium&min_price=10&max_price=50
+function custom_filter_products($data)
+{
+    $attributes = isset($data['attributes']) ? $data['attributes'] : array();
+    $min_price = isset($data['min_price']) ? floatval($data['min_price']) : 0;
+    $max_price = isset($data['max_price']) ? floatval($data['max_price']) : PHP_FLOAT_MAX;
+
+    $tax_query = array();
+
+    foreach ($attributes as $attribute => $terms) {
+        $tax_query[] = array(
+            'taxonomy' => 'pa_' . $attribute, // Adjust the taxonomy based on your attribute
+            'field' => 'slug',
+            'terms' => $terms,
+        );
+    }
+
+    // Query WooCommerce products with the specified attribute terms and price range
+    $args = array(
+        'post_type' => 'product',
+        'posts_per_page' => -1,
+        'tax_query' => $tax_query,
+        'meta_query' => array(
+            array(
+                'key' => '_price',
+                'value' => array($min_price, $max_price),
+                'type' => 'NUMERIC',
+                'compare' => 'BETWEEN',
+            ),
         ),
     );
 
-    return rest_ensure_response($response_data);
-}
+    $products = get_posts($args);
 
-// product vatiation
-function get_product_variation_by_id($data)
-{
-    // Get product ID from the request
-    $product_id = $data['id'];
-    // return $product_id;
-    $product = wc_get_product($product_id);
-    $current_products = $product->get_children();
-    $data = [];
-    foreach ($current_products as $variation_id) {
-        $products = wc_get_product($variation_id);
-        $data[] = $products->get_data();
+    $formatted_products = array();
+
+    foreach ($products as $product) {
+        $formatted_products[] = wc_get_product($product->ID)->get_data();
     }
-    return $data;
+
+    return rest_ensure_response($formatted_products);
 }
