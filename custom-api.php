@@ -47,10 +47,10 @@ add_action(
             'permission_callback' => '__return_true'
         ));
 
-        register_rest_route('custom/v1', 'products/(?P<slug>[a-zA-Z0-9-]+)', array(
+        register_rest_route('custom/v1', '/products-by-category', array(
             'methods' => 'GET',
-            'callback' => 'wl_get_product',
-            'permission_callback' => '__return_true'
+            'callback' => 'custom_get_products_by_category',
+            'permission_callback' => '__return_true', // Set permission callback as needed
         ));
 
         register_rest_route('custom/v1', 'products-price', array(
@@ -63,6 +63,18 @@ add_action(
             'methods' => 'GET',
             'callback' => 'get_product_by_id',
             'permission_callback' => '__return_true'
+        ));
+
+        register_rest_route('custom/v1', 'products-by-slug/(?P<slug>[\w-]+)', array(
+            'methods' => 'GET',
+            'callback' => 'get_product_by_slug',
+            // 'permission_callback' => '__return_true'
+        ));
+
+        register_rest_route('custom/v1', 'products-by-sku/(?P<sku>[\w-]+)', array(
+            'methods' => 'GET',
+            'callback' => 'get_product_by_sku',
+            // 'permission_callback' => '__return_true'
         ));
 
         register_rest_route('custom/v1', 'product-variations/(?P<id>\d+)', array(
@@ -95,9 +107,9 @@ add_action(
             'permission_callback' => '__return_true'
         ));
 
-        register_rest_route('custom/v1', '/flash-sale-products', array(
+        register_rest_route('custom/v1', '/related-products/(?P<sku>[\w-]+)', array(
             'methods' => 'GET',
-            'callback' => 'get_custom_flash_sale_products',
+            'callback' => 'wpc_get_related_products_by_sku',
             'permission_callback' => '__return_true'
         ));
 
@@ -144,12 +156,66 @@ add_action(
         register_rest_route('product/v1', '/products/attributes', array(
             'methods' => 'GET',
             'callback' => 'custom_product_filter_by_attributes',
+            // 'permission_callback' => '__return_true', // Set permission callback as needed
         ));
 
         register_rest_route('product/v1', '/products/filter', array(
             'methods' => 'GET',
             'callback' => 'custom_filter_products',
             'permission_callback' => '__return_true', // Set permission callback as needed
+        ));
+
+        register_rest_route('post/v1', '/posts', array(
+            'methods' => 'GET',
+            'callback' => 'custom_get_all_posts',
+            'permission_callback' => '__return_true', // Set permission callback as needed
+        ));
+
+        register_rest_route('custom/v1', '/posts-by-category', array(
+            'methods' => 'GET',
+            'callback' => 'custom_get_posts_by_category',
+            'permission_callback' => '__return_true', // Set permission callback as needed
+        ));
+
+        register_rest_route('custom/v1', '/recent-comments', array(
+            'methods' => 'GET',
+            'callback' => 'custom_get_recent_comments',
+            'permission_callback' => '__return_true', // Set permission callback as needed
+        ));
+
+        register_rest_route('custom/v1', '/archives', array(
+            'methods' => 'GET',
+            'callback' => 'custom_get_archives',
+            'permission_callback' => '__return_true', // Set permission callback as needed
+        ));
+
+        register_rest_route('custom/v1', '/post-categories', array(
+            'methods' => 'GET',
+            'callback' => 'custom_get_post_categories',
+            'permission_callback' => '__return_true', // Set permission callback as needed
+        ));
+
+        register_rest_route('custom/v1', '/archives-by-month', array(
+            'methods' => 'GET',
+            'callback' => 'custom_get_archives_by_month',
+            'permission_callback' => '__return_true', // Set permission callback as needed
+        ));
+
+
+        register_rest_route('product/v1', '/filter-products', array(
+            'methods' => 'GET',
+            'callback' => 'filter_products_by_attribute_terms',
+            'args' => array(
+                'attribute' => array(
+                    'required' => true,
+                ),
+                'terms' => array(
+                    'required' => true,
+                    'validate_callback' => function ($param, $request, $key) {
+                        return is_array($param);
+                    },
+                ),
+            ),
         ));
     }
 );
@@ -322,15 +388,39 @@ function wl_get_categories_products($req)
 }
 
 // get product by slug
-function wl_get_product($req)
+function custom_get_products_by_category($data)
 {
-    $slug = $req['slug'];
-    $productId = get_page_by_path($slug, OBJECT, 'product');
-    if (!empty($productId)) {
-        $product = wc_get_product($productId);
-        return single_product_data($product);
+    $category_slug = isset($data['category']) ? sanitize_text_field($data['category']) : '';
+    $limit = isset($data['limit']) ? absint($data['limit']) : -1; // -1 means no limit
+    $order = isset($data['order']) ? strtoupper($data['order']) : 'ASC'; // Default to ascending order
+
+    $args = array(
+        'post_type' => 'product',
+        'posts_per_page' => $limit,
+        'tax_query' => array(
+            array(
+                'taxonomy' => 'product_cat',
+                'field' => 'slug',
+                'terms' => $category_slug,
+            ),
+        ),
+        'order' => $order,
+    );
+
+    $products_query = new WP_Query($args);
+
+    $formatted_products = array();
+
+    while ($products_query->have_posts()) {
+        $products_query->the_post();
+        $product = wc_get_product();
+
+        $formatted_products[] = single_product_data($product);
     }
-    return wpc_error_404();
+
+    wp_reset_postdata();
+
+    return rest_ensure_response($formatted_products);
 }
 
 // get product within_ price
@@ -382,6 +472,40 @@ function get_product_by_id($req)
     return single_product_data($product);
 }
 
+// get product by slug
+function get_product_by_slug($data)
+{
+    $product_slug = $data['slug'];
+    // Get product ID by slug
+    $product = get_page_by_path($product_slug, OBJECT, 'product');
+
+
+    if ($product && $product->post_type === 'product') {
+        // Get product data
+        $product_data = wc_get_product($product->ID);
+        return single_product_data($product_data);
+    } else {
+        return new WP_Error('invalid_product_slug', 'Product not found', array('status' => 404));
+    }
+}
+
+// get product by sku
+function get_product_by_sku($data)
+{
+    $product_slug = $data['sku'];
+    // Get product ID by slug
+    $productId = wc_get_product_id_by_sku($product_slug);
+
+
+    if ($productId) {
+        // Get product data
+        $product_data = wc_get_product($productId);
+        return single_product_data($product_data);
+    } else {
+        return new WP_Error('invalid_product_slug', 'Product not found', array('status' => 404));
+    }
+}
+
 // product vatiation
 function get_product_variation_by_id($data)
 {
@@ -402,6 +526,23 @@ function get_product_variation_by_id($data)
 function wpc_get_related_products($data)
 {
     $productId =  $data['product_id'];
+    $data = [];
+    $product = wc_get_related_products($productId);
+
+    if (!empty($product)) {
+        foreach ($product as $item) {
+            $show = wc_get_product($item);
+            $data[] = single_product_data($show);
+        }
+        return $data;
+    }
+}
+
+//get product relates bysku
+function wpc_get_related_products_by_sku($data)
+{
+    $productSku =  $data['sku'];
+    $productId = wc_get_product_id_by_sku($productSku);
     $data = [];
     $product = wc_get_related_products($productId);
 
@@ -708,6 +849,7 @@ function custom_create_order($request)
 // get order
 function custom_get_orders($request)
 {
+
     $customer_id = get_current_user_id();
 
     if (empty($customer_id)) {
@@ -905,6 +1047,7 @@ function update_customer_info(WP_REST_Request $request)
 function custom_product_filter_by_attributes($data)
 {
     $attributes = $data->get_params();
+    $limit = $data['limit'] ? $data['limit'] : 5;
     if (!$attributes) {
         return wl_get_all_products($data);
     }
@@ -919,12 +1062,12 @@ function custom_product_filter_by_attributes($data)
     // Query WooCommerce products with the specified attribute terms
     $args = array(
         'post_type' => 'product',
-        'posts_per_page' => -1,
+        'posts_per_page' => $limit,
         'tax_query' => $tax_query,
     );
 
     $products = get_posts($args);
-
+    return $products;
     $formatted_products = array();
 
     foreach ($products as $product) {
@@ -937,45 +1080,253 @@ function custom_product_filter_by_attributes($data)
 }
 
 // array of attribute terms and a price range in the query parameters
-// wp-json/custom/v1/products/filter?attributes[color]=red,blue&attributes[size]=small,medium&min_price=10&max_price=50
+// wp-json/product/v1/products/filter?attributes[color]=red,blue&attributes[size]=small,medium&min_price=10&max_price=50
 function custom_filter_products($data)
 {
     $attributes = isset($data['attributes']) ? $data['attributes'] : array();
     $min_price = isset($data['min_price']) ? floatval($data['min_price']) : 0;
     $max_price = isset($data['max_price']) ? floatval($data['max_price']) : PHP_FLOAT_MAX;
+    $limit = isset($data['limit']) ? floatval($data['limit']) : 10;
 
-    $tax_query = array();
+    $tax_query = [];
 
     foreach ($attributes as $attribute => $terms) {
-        $tax_query[] = array(
+        $tax_query[] = [
             'taxonomy' => 'pa_' . $attribute, // Adjust the taxonomy based on your attribute
             'field' => 'slug',
             'terms' => $terms,
-        );
+        ];
     }
 
     // Query WooCommerce products with the specified attribute terms and price range
-    $args = array(
+    $args = [
         'post_type' => 'product',
-        'posts_per_page' => -1,
+        'posts_per_page' => $limit,
         'tax_query' => $tax_query,
-        'meta_query' => array(
-            array(
+        'meta_query' => [
+            [
                 'key' => '_price',
-                'value' => array($min_price, $max_price),
+                'value' => [$min_price, $max_price],
                 'type' => 'NUMERIC',
                 'compare' => 'BETWEEN',
-            ),
-        ),
-    );
+            ],
+        ],
+    ];
 
     $products = get_posts($args);
 
-    $formatted_products = array();
+    $formatted_products = [];
 
     foreach ($products as $product) {
-        $formatted_products[] = wc_get_product($product->ID)->get_data();
+        $show = wc_get_product($product->ID);
+        $formatted_products[] =  single_product_data($show);
+        // $formatted_products[] = wc_get_product($product->ID)->get_data();
     }
 
     return rest_ensure_response($formatted_products);
+}
+
+// get all posst
+function custom_get_all_posts()
+{
+    $args = array(
+        'post_type' => 'post',
+        'posts_per_page' => -1,
+    );
+
+    $posts = get_posts($args);
+
+    $formatted_posts = [];
+
+    foreach ($posts as $post) {
+        $thumbnail_id = get_post_thumbnail_id($post->ID);
+        $thumbnail_url = wp_get_attachment_url($thumbnail_id);
+        $formatted_posts[] = array(
+            'post_id' => $post->ID,
+            'title' => $post->post_title,
+            'post_date' => $post->post_date,
+            'post_slug' => $post->post_name,
+            'post_type' => $post->post_type,
+            'content' => $post->post_content,
+            'thumbnail_url' => $thumbnail_url,
+            // Add more post details as needed
+        );
+    }
+
+    return rest_ensure_response($formatted_posts);
+}
+
+// get post by category
+function custom_get_posts_by_category($data)
+{
+    $category_slug = isset($data['category']) ? sanitize_text_field($data['category']) : '';
+
+    $args = array(
+        'post_type' => 'post',
+        'posts_per_page' => -1,
+        'category_name' => $category_slug,
+    );
+
+    $posts = get_posts($args);
+
+    $formatted_posts = array();
+
+    foreach ($posts as $post) {
+        $thumbnail_id = get_post_thumbnail_id($post->ID);
+        $thumbnail_url = wp_get_attachment_url($thumbnail_id);
+
+        $formatted_posts[] = array(
+            'post_id' => $post->ID,
+            'title' => $post->post_title,
+            'content' => $post->post_content,
+            'thumbnail_url' => $thumbnail_url,
+            // Add more post details as needed
+        );
+    }
+
+    return rest_ensure_response($formatted_posts);
+}
+
+// get all recent comment
+function custom_get_recent_comments($data)
+{
+
+    $limit = isset($data['limit']) ? $data['limit'] : 10;
+    $order = isset($data['order']) ? $data['order'] : 'desc';
+
+
+    $args = array(
+        'number' => $limit, // Adjust the number of comments to retrieve
+        'status' => 'approve', // Retrieve only approved comments
+        'order' => $order, // Order by descending date
+    );
+
+    $comments = get_comments($args);
+
+    $formatted_comments = array();
+
+    foreach ($comments as $comment) {
+        $title = get_the_title($comment->comment_post_ID);
+        $formatted_comments[] = array(
+            'comment_id' => $comment->comment_ID,
+            'post_id' => $comment->comment_post_ID,
+            'post_title' => $title,
+            'author' => $comment->comment_author,
+            'content' => $comment->comment_content,
+            'date' => $comment->comment_date,
+            // Add more comment details as needed
+        );
+    }
+
+    return rest_ensure_response($formatted_comments);
+}
+
+// get all archives
+function custom_get_archives()
+{
+    $archives = wp_get_archives(array(
+        'type' => 'monthly',
+        'echo' => 0,
+    ));
+
+    // Split the archives into monthly and yearly
+    $archive_items = explode("\n", $archives);
+    $monthly_archives = array();
+    $yearly_archives = array();
+
+    foreach ($archive_items as $archive_item) {
+        $archive_data = sscanf($archive_item, '<a href="%s">%d %s</a> (%d)');
+        if ($archive_data) {
+            $year = $archive_data[3];
+            if (!isset($yearly_archives[$year])) {
+                $yearly_archives[$year] = array();
+            }
+            $yearly_archives[$year][] = array(
+                'url' => $archive_data[0],
+                'month' => $archive_data[2],
+            );
+
+            $month = $archive_data[1] . ' ' . $archive_data[2];
+            $monthly_archives[$month] = array(
+                'url' => $archive_data[0],
+                'count' => 0, // You can retrieve the post count for each month if needed
+            );
+        }
+    }
+
+    return rest_ensure_response(array(
+        'monthly' => $monthly_archives,
+        'yearly' => $yearly_archives,
+    ));
+}
+
+// get all category post
+function custom_get_post_categories()
+{
+    $categories = get_categories(array(
+        'taxonomy' => 'category', // Adjust the taxonomy if using a custom taxonomy
+        'hide_empty' => false, // Set to true if you want to exclude empty categories
+    ));
+
+    $formatted_categories = array();
+
+    foreach ($categories as $category) {
+        $formatted_categories[] = array(
+            'id' => $category->term_id,
+            'name' => $category->name,
+            'slug' => $category->slug,
+            'parent' => $category->parent,
+            // Add more category details as needed
+        );
+    }
+
+    return rest_ensure_response($formatted_categories);
+}
+
+//http://localhost/wp-json/product/v1/filter-products?attribute=color&terms[]=red&terms[]=blue&terms[]=pink&min_price=640000&max_price=1000000
+function filter_products_by_attribute_terms($data)
+{
+    $attribute = sanitize_title($data['attribute']);
+    $terms = array_map('sanitize_title', $data['terms']);
+    $limit = isset($data['limit']) ? $data['limit'] : 10;
+    $min_price = isset($data['min_price']) ? floatval($data['min_price']) : 0;
+    $max_price = isset($data['max_price']) ? floatval($data['max_price']) : PHP_FLOAT_MAX;
+
+    // Your logic to filter products based on the attribute and terms
+    $tax_query = array(
+        'relation' => 'AND',
+    );
+
+    foreach ($terms as $term) {
+        $tax_query[] = array(
+            'taxonomy' => 'pa_' . $attribute,
+            'field' => 'slug',
+            'terms' => $term,
+        );
+    }
+
+    $args = array(
+        'post_type' => 'product',
+        'posts_per_page' => $limit,
+        'tax_query' => $tax_query,
+        'meta_query' => [
+            [
+                'key' => '_price',
+                'value' => [$min_price, $max_price],
+                'type' => 'NUMERIC',
+                'compare' => 'BETWEEN',
+            ],
+        ],
+    );
+    // return $args;
+    $formatted_products = [];
+    $filtered_products = new WP_Query($args);
+    $product = $filtered_products->posts;
+    foreach ($filtered_products->posts as $item) {
+        $show = wc_get_product($item->ID);
+        $formatted_products[] =  single_product_data($show);
+    }
+
+    // Return a JSON response
+    return new WP_REST_Response($formatted_products, 200);
 }
